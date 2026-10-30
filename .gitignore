@@ -1,2 +1,9 @@
 __pycache__/
 *.pyc
+
+# Datasets, logs and checkpoints are too large for GitHub (regenerate with yousef/collect_data.py)
+**/data/
+*.npz
+log_*.txt
+*.pt
+*.pth
