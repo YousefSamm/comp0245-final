@@ -139,18 +139,8 @@ Why sin/cos: −3.13 and +3.13 rad are nearly the same heading but far apart as 
 - ArmNet: `torque_arm`, shape (N, 7)
 - Never used as inputs: `phase`, `q_des_arm` (expert internals), `t`.
 
-### 3.6 Bugs fixed while writing it
-| Error | Cause | Fix |
-|---|---|---|
-| `KeyError: 'base_pose'` | typo | key is `base_pos` |
-| `ValueError: truth value of an array…` | `d[Xb[:, 7:9]]` (array used as dict key) | `Xb[:, 7:9]` |
-| `IndentationError` risk | `X = …` indented 1 space, rest 4 | same 4-space indent |
-| `ValueError: … 2 dimension(s) … 3 dimension(s)` | `np.linalg.norm([Xb[:, 7:9]], …)` (extra list brackets) | remove `[ ]` |
 
-Debug tip: print the shape of every array before `np.column_stack`.
-Note: `np.load(path, 'r')` passes `mmap_mode='r'` (no effect for `.npz`); `np.load(path)` is enough.
-
-### 3.7 Checkpoints (all passed)
+### 3.6 Checkpoints (all passed)
 | # | Test | Result |
 |---|---|---|
 | 1 | `world_to_base([[0,1]], [π/2])` | `[[1.0, 6.1e-17]]` → (1, 0), 6e-17 = float rounding |
@@ -158,7 +148,7 @@ Note: `np.load(path, 'r')` passes `mmap_mode='r'` (no effect for `.npz`); `np.lo
 | 3 | wheel round trip `vw_to_wheels(wheels_to_vw(w)) − w` | **2.4e-7** (float32 precision) |
 | 4 | shapes / NaNs | `(14061, 10) (14061, 25) 14061 False False` |
 
-### 3.8 Finding: "base done" is not a simple distance threshold
+### 3.7 Finding: "base done" is not a simple distance threshold
 - Over the first 100 episodes the worst goal distance during phase 3 was **0.161 m** (> 0.08).
 - 32 of the 100 episodes exceeded 0.08 m; **all had `nav_time` < 25 s → no timeouts.**
 - Two causes, both from the expert's own logic:
@@ -166,7 +156,7 @@ Note: `np.load(path, 'r')` passes `mmap_mode='r'` (no effect for `.npz`); `np.lo
   2. **Drift**: turning on the spot in the orient phase (skid-steer slip) + reaction forces of the reaching arm add a few mm–cm (cases 0.080–0.095 m).
 - **Report point:** in ≈ 1/3 of episodes the arm starts reaching with the base 8–16 cm from its nominal goal → justifies several "done" signals (distance + bearing + speed) instead of a single distance rule.
 
-### 3.9 Moved from notebook to file
+### 3.8 Moved from notebook to file
 Functions moved into `yousef/features.py`; the notebook imports them:
 ```python
 %load_ext autoreload
