@@ -232,23 +232,8 @@ D = dict(np.load("/home/yousef/ucl_ws/comp0245-final/robotnik_arm_task/data/proc
 
 ---
 
-## 5. Environment: installing PyTorch with CUDA
 
-- The notebook kernel uses `~/ucl_ws/LAB_SESSION_COMP_0245_2026_PUBLIC/.venv` (Python 3.10), which had **no torch**.
-- Reusing another install is fragile (venv isolation, Python/NumPy version mismatch); torch is needed in this venv anyway because the policy runs the network inside PyBullet.
-- The venv was made with **uv** → `No module named pip`. Install with:
-  ```bash
-  uv pip install torch --index-url https://download.pytorch.org/whl/cu128
-  ```
-  (fallback: `python -m ensurepip --upgrade` then `python -m pip install …`)
-- CUDA notes: PyTorch wheels bundle their own CUDA runtime; `nvcc` (12.8 here) doesn't matter, the **driver** must support ≥ 12.8 (`nvidia-smi`, top-right).
-- GPU speed-up for these small MLPs is limited by DataLoader overhead; bigger batches (4096–8192, lr ≈ 2e-3) or putting the whole dataset on the GPU help.
-- After installing: restart the kernel → all variables lost → reload `D` (`NameError: name 'D' is not defined`). Keep the load cell near the top of the notebook.
-- Device: `device = "cuda" if torch.cuda.is_available() else "cpu"`, and pass `device=device` to `train_model`.
-
----
-
-## 6. `yousef/models.py`
+## 5. `yousef/models.py`
 
 ```python
 class MLP(nn.Module):
@@ -270,7 +255,7 @@ class MLP(nn.Module):
 
 ---
 
-## 7. `yousef/train.py`
+## 6. `yousef/train.py`
 
 - `make_loaders(D, net="b"|"a", batch_size=1024)`: normalises X and Y with the training stats, wraps them in `TensorDataset`; train loader `shuffle=True`, val loader `shuffle=False`, batch × 4.
 - `train_model(model, train_dl, val_dl, epochs=30, lr=1e-3, patience=5, device)`:
@@ -280,7 +265,7 @@ class MLP(nn.Module):
 
 ---
 
-## 8. Result: BaseNet trained
+## 7. Result: BaseNet trained
 
 | Epoch | Train | Val |
 |---|---|---|
@@ -305,7 +290,7 @@ Interpretation:
 
 ---
 
-## 9. Next steps (in order)
+## 8. Next steps (in order)
 
 1. **Save BaseNet** with its normalisation stats (not yet confirmed done):
    ```python
@@ -330,8 +315,3 @@ Interpretation:
 | Fri 6 Nov | final pass, README, submit |
 
 ---
-
-## 10. For the README / AI-use declaration
-- Written by Claude at Yousef's request (earlier sessions): the resume + error-handling fixes in `collect_data.py`, the path changes when moving files into `yousef/`, the `yousef/README.md`.
-- Today: Claude renamed the saved array keys in `dataset.py` (`Xb_train`, `Xb_sd`, …). All other code today was written by Yousef from Claude's hints/skeletons.
-- Check COMP0245's policy on AI assistance and acknowledge it as required.
