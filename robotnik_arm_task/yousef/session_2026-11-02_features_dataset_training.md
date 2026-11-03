@@ -164,9 +164,8 @@ Functions moved into `yousef/features.py`; the notebook imports them:
 import sys; sys.path.insert(0, "/home/yousef/ucl_ws/comp0245-final/robotnik_arm_task/yousef")
 from features import *
 ```
-Checkpoint 4 re-run with the imported version: same output.
 
----
+
 
 ## 4. `yousef/dataset.py`
 
