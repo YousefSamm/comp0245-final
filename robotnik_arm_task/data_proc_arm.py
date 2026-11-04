@@ -1,65 +1,60 @@
-import numpy as np
 import os
-import glob
-import matplotlib.pyplot as plt
-
-import torch
-import torch.nn as nn
-import torch.optim as optim
-# from torchvision import datasets, transforms
-from torch.utils.data import DataLoader
-import matplotlib.pyplot as plt
 from datetime import datetime
 
+import numpy as np
+
+# ----------------------------------------------------------------------------
+# Config
+# ----------------------------------------------------------------------------
 ARM_FEATS = [
     "ee_pos",
     "q_arm",
     "qd_arm",
     "target",
-    "torque_arm"
+    "torque_arm",
+    "phase",
 ]
 
-
+# Column layout of the combined array returned by combine_data()
+# (phase column is dropped after filtering)
 ARM_COLS = [
-    "ep_id", #0
-    "t", #1
-    "ee_pos_x", #2
-    "ee_pos_y", #3
-    "ee_pos_z", #4
-    "j1_pos", #5
-    "j2_pos", #6
-    "j3_pos", #7
-    "j4_pos", #8
-    "j5_pos", #9
-    "j6_pos", #10
-    "j7_pos", #11
-    "j1_vel", #12
-    "j2_vel", #13
-    "j3_vel", #14
-    "j4_vel", #15
-    "j5_vel", #16
-    "j6_vel", #17
-    "j7_vel", #18       
-    "target_x", #19
-    "target_y", #20
-    "target_z", #21
-    "torque_1", #22
-    "torque_2", #23
-    "torque_3", #24
-    "torque_4", #25
-    "torque_5", #26
-    "torque_6", #27
-    "torque_7" #28
+    "ep_id",                                                    # 0
+    "t",                                                        # 1
+    "ee_pos_x", "ee_pos_y", "ee_pos_z",                         # 2-4
+    "j1_pos", "j2_pos", "j3_pos", "j4_pos",
+    "j5_pos", "j6_pos", "j7_pos",                               # 5-11
+    "j1_vel", "j2_vel", "j3_vel", "j4_vel",
+    "j5_vel", "j6_vel", "j7_vel",                               # 12-18
+    "target_x", "target_y", "target_z",                         # 19-21
+    "torque_1", "torque_2", "torque_3", "torque_4",
+    "torque_5", "torque_6", "torque_7",                         # 22-28
 ]
 
+PROC_COLS = (
+    ["ep_id", "pos_error_x", "pos_error_y", "pos_error_z"]
+    + [f"j{i}_sin" for i in range(1, 8)]
+    + [f"j{i}_cos" for i in range(1, 8)]
+    + [f"j{i}_vel" for i in range(1, 8)]
+    + [f"tau_{i}" for i in range(1, 8)]
+)  # 32 columns
+
+# Episode-ID prefixes to load. ep_00xxx..ep_03xxx -> training pool,
+# ep_09xxx -> test pool (IDs >= TEST_EP_THRESHOLD).
+EP_PREFIXES = ["00", "01", "02", "03", "09"]
+TEST_EP_THRESHOLD = 9000
+
+# Phases to keep: 2.0 = orient, 3.0 = stop
+KEEP_PHASES = (2.0, 3.0)
+
+# Normalisation options
+CENTER_POS_ERROR = False     # False -> scale only, so zero error stays zero input
+NORMALIZE_TORQUES = True     # normalise targets too (stats saved for un-normalising)
+EPS = 1e-8                   # std floor to avoid divide-by-zero
 
 
 def combine_data():
-
-    all_ids = ["00", "01", "02", "03", "09"]
     cur_dir = os.path.dirname(os.path.abspath(__file__))
     raw_data_path = os.path.join(cur_dir, "data", "raw")
-    
 
     blocks = []
     n_skipped_failed = 0
@@ -68,108 +63,154 @@ def combine_data():
         # must be a finished episode file, not a leftover temp file
         if not fname.endswith(".npz") or fname.endswith(".tmp.npz"):
             continue
-        # ep_00xxx, ep_01xxx, ep_02xxx, ep_03xxx -> training pool only
-     
-        if not any(fname.startswith(f"ep_{tid}") for tid in all_ids):
+        if not any(fname.startswith(f"ep_{p}") for p in EP_PREFIXES):
             continue
 
         path = os.path.join(raw_data_path, fname)
 
-        data = np.load(path)
-        if not bool(data["success"]):              # exclude failed expert episodes
-            n_skipped_failed += 1
-            continue
+        with np.load(path) as data:
+            if not bool(data["success"]):  # exclude failed expert episodes
+                n_skipped_failed += 1
+                continue
 
-        #Add ep id
-        ep_id = int(fname[3:8])          # "ep_00012.npz" -> 12
-        n_obs = data['t'].shape[0]
+            ep_id = int(fname[3:8])  # "ep_00012.npz" -> 12
+            n_obs = data["t"].shape[0]
 
-        ep_inputs = np.column_stack([
-            np.full(n_obs, ep_id),       # column 0: episode id
-            data["t"],                   # column 1: time
-        ])
+            ep_inputs = np.column_stack([
+                np.full(n_obs, ep_id),  # column 0: episode id
+                data["t"],              # column 1: time
+            ])
 
-        for feat in ARM_FEATS:
-            d = data[feat]
-            
-            if feat == "target":
-                d = np.tile(d, (n_obs, 1))
+            for feat in ARM_FEATS:
+                d = data[feat]
 
-            if len(d.shape) == 1:
-                d = d.reshape(-1, 1)
-                
-            assert ep_inputs.shape[0] == d.shape[0]
-            ep_inputs = np.concatenate((ep_inputs, d), axis=1)
-        
+                if feat == "target":
+                    d = np.tile(d, (n_obs, 1))
+
+                if d.ndim == 1:
+                    d = d.reshape(-1, 1)
+
+                assert ep_inputs.shape[0] == d.shape[0], (
+                    f"{fname}: feature '{feat}' has {d.shape[0]} rows, "
+                    f"expected {ep_inputs.shape[0]}"
+                )
+                ep_inputs = np.concatenate((ep_inputs, d), axis=1)
 
         blocks.append(ep_inputs)
-    
+
+    if not blocks:
+        raise RuntimeError(
+            f"No usable episodes found in {raw_data_path} "
+            f"(prefixes {EP_PREFIXES}, {n_skipped_failed} failed episodes skipped)."
+        )
+
     arr = np.vstack(blocks)
 
+    # Keep only orient and stop phases, then drop the phase column (last)
+    phase = arr[:, -1]
+    arr = arr[np.isin(phase, KEEP_PHASES)][:, :-1]
+
+    assert arr.shape[1] == len(ARM_COLS), (
+        f"Expected {len(ARM_COLS)} columns, got {arr.shape[1]}"
+    )
 
     print(f"Built array {arr.shape} from {len(blocks)} episodes "
-        f"({n_skipped_failed} failed excluded)")
-    
-    stamp = datetime.now().strftime("%Y%m%d_%H%M")
-    np.savez(os.path.join(cur_dir, "data", "proc", f"arm_combined_{stamp}"), arr=arr, cols=np.array(ARM_COLS))
+          f"({n_skipped_failed} failed excluded)")
 
-    
+    stamp = datetime.now().strftime("%Y%m%d_%H%M")
     return arr, stamp
 
 
 
-def proc_data(arr, stamp=None):
-    cur_dir = os.path.dirname(os.path.abspath(__file__))
+def _safe_std(x):
+    std = x.std(axis=0)
+    return np.where(std < EPS, 1.0, std)
+
+
+def fit_stats(train_arr):
+    """Compute normalisation stats from TRAINING rows only (raw combined array)."""
+    pos_err = train_arr[:, 19:22] - train_arr[:, 2:5]  # target - ee_pos
+    vel = train_arr[:, 12:19]
+    tau = train_arr[:, 22:29]
+
+    stats = {
+        "pos_err_mean": pos_err.mean(axis=0) if CENTER_POS_ERROR else np.zeros(3),
+        "pos_err_std": _safe_std(pos_err),
+        "vel_mean": vel.mean(axis=0),
+        "vel_std": _safe_std(vel),
+    }
+    if NORMALIZE_TORQUES:
+        stats["tau_mean"] = tau.mean(axis=0)
+        stats["tau_std"] = _safe_std(tau)
+    else:
+        stats["tau_mean"] = np.zeros(7)
+        stats["tau_std"] = np.ones(7)
+    return stats
+
+
+def build_features(arr, stats, isinsim=False):
+    """Turn a raw combined array into the processed 32-column array."""
+
+    if isinsim:
+        #Add two columns to the front of the array for ep_id and t proxy
+        arr = np.column_stack([np.zeros(arr.shape[0]), np.zeros(arr.shape[0]), arr])
+
+
     ep_id = arr[:, 0]
 
-    # Calculate ee error
-    ee_pos_error =  arr[:, 19:22] - arr[:, 2:5] # target - ee_pos
+    pos_err = arr[:, 19:22] - arr[:, 2:5]  # target - ee_pos
+    pos_err = (pos_err - stats["pos_err_mean"]) / stats["pos_err_std"]
 
-    # Take sin and cos of all joint angles and velocities
+    # sin / cos of joint angles only (not velocities)
     j_sin = np.sin(arr[:, 5:12])
     j_cos = np.cos(arr[:, 5:12])
 
-    # Normalise data
-    normalized_pos_error_x = (ee_pos_error[:, 0] - ee_pos_error.mean(axis=0)[0]) / np.sqrt(ee_pos_error.var(axis=0)[0])
-    normalized_pos_error_y = (ee_pos_error[:, 1] - ee_pos_error.mean(axis=0)[1]) / np.sqrt(ee_pos_error.var(axis=0)[1])
-    normalized_pos_error_z = (ee_pos_error[:, 2] - ee_pos_error.mean(axis=0)[2]) / np.sqrt(ee_pos_error.var(axis=0)[2])
+    vel = (arr[:, 12:19] - stats["vel_mean"]) / stats["vel_std"]
+    if isinsim:
+        tau = np.zeros((arr.shape[0], 7))
 
-    # Normalise joint velocities
-    normalized_j_vel = (arr[:, 12:19] - arr[:, 12:19].mean(axis=0)) / np.sqrt(arr[:, 12:19].var(axis=0))
+    else:
+        tau = (arr[:, 22:29] - stats["tau_mean"]) / stats["tau_std"]
+
+    return np.column_stack([ep_id, pos_err, j_sin, j_cos, vel, tau])
 
 
-    # construct array
-    proc_arr = np.column_stack([
-        ep_id,
-        normalized_pos_error_x,
-        normalized_pos_error_y,
-        normalized_pos_error_z,
-        j_sin,
-        j_cos,
-        normalized_j_vel,
-        arr[:, 22:] # torques
-    ])
+def proc_data(arr, stamp=None):
+    cur_dir = os.path.dirname(os.path.abspath(__file__))
+    out_dir = os.path.join(cur_dir, "data", "proc")
+    os.makedirs(out_dir, exist_ok=True)
 
     if stamp is None:
         stamp = datetime.now().strftime("%Y%m%d_%H%M")
 
-    # Filter based on train vs test
+    # Split first, so stats come from training data only
+    is_test = arr[:, 0] >= TEST_EP_THRESHOLD
+    raw_train, raw_test = arr[~is_test], arr[is_test]
 
-    train_arr = proc_arr[proc_arr[:, 0] < 9000]
-    test_arr = proc_arr[proc_arr[:, 0] >= 9000]
+    if len(raw_train) == 0:
+        raise RuntimeError("No training rows (ep_id < %d)." % TEST_EP_THRESHOLD)
+    if len(raw_test) == 0:
+        print("Warning: no test rows (ep_id >= %d)." % TEST_EP_THRESHOLD)
 
-    np.savez(os.path.join(cur_dir, "data", "proc", f"arm_train_proc_{stamp}"), arr=train_arr, cols=np.array(["ep_id", "pos_error_x", "pos_error_y", "pos_error_z", "j1_sin", "j2_sin", "j3_sin", "j4_sin", "j5_sin", "j6_sin", "j7_sin", "j1_cos", "j2_cos", "j3_cos", "j4_cos", "j5_cos", "j6_cos", "j7_cos", "j1_vel", "j2_vel", "j3_vel", "j4_vel", "j5_vel", "j6_vel", "j7_vel", "tau_1", "tau_2", "tau_3", "tau_4", "tau_5", "tau_6", "tau_7"]))
-    np.savez(os.path.join(cur_dir, "data", "proc", f"arm_test_proc_{stamp}"), arr=test_arr, cols=np.array(["ep_id", "pos_error_x", "pos_error_y", "pos_error_z", "j1_sin", "j2_sin", "j3_sin", "j4_sin", "j5_sin", "j6_sin", "j7_sin", "j1_cos", "j2_cos", "j3_cos", "j4_cos", "j5_cos", "j6_cos", "j7_cos", "j1_vel", "j2_vel", "j3_vel", "j4_vel", "j5_vel", "j6_vel", "j7_vel", "tau_1", "tau_2", "tau_3", "tau_4", "tau_5", "tau_6", "tau_7"]))
-    
-    return f"Saved processed train/test arrays with stamp {stamp} to data/proc"
+    stats = fit_stats(raw_train)
+    train_arr = build_features(raw_train, stats)
+    test_arr = build_features(raw_test, stats)
+
+    cols = np.array(PROC_COLS)
+    assert train_arr.shape[1] == len(cols)
+
+    np.savez(os.path.join(out_dir, f"arm_train_proc_{stamp}"), arr=train_arr, cols=cols)
+    np.savez(os.path.join(out_dir, f"arm_test_proc_{stamp}"), arr=test_arr, cols=cols)
+    np.savez(os.path.join(out_dir, f"arm_norm_stats_{stamp}"), **stats)
+
+    print(f"train {train_arr.shape}, test {test_arr.shape}")
+    return f"Saved processed train/test arrays and norm stats with stamp {stamp} to data/proc"
 
 
 def main():
     arr, stamp = combine_data()
-    proc_data(arr, stamp=stamp)
-
+    print(proc_data(arr, stamp=stamp))
 
 
 if __name__ == "__main__":
-
     main()
