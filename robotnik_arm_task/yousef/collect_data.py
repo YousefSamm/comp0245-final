@@ -51,7 +51,22 @@ REACH_TOLERANCE = 0.01
 # ==============================================================================
 
 
-def run_episode(target, ep_id, base_init=None): # base_init = (x, y, yaw)
+# Noise injection (DART-style): random pushes are added to the commands that are APPLIED to the robot,
+# while the expert's clean commands are recorded as labels (wheel_exp / torque_exp). The robot is thus
+# pushed slightly off the expert's path and the data shows how the expert corrects it.
+# Each push is held for NOISE_HOLD seconds: noise that changes every 1 ms averages out before the arm moves.
+NOISE_HOLD = 0.2          # s
+NOISE_TORQUE_STD = 2.5    # N·m per arm joint (≈ 0.025 rad deviation with the expert's Kp = 100)
+NOISE_V_STD = 0.015       # m/s, base forward speed
+NOISE_W_STD = 0.06        # rad/s, base turning rate
+NOISE_ARM_OFF_DIST = 0.05 # m: arm pushes stop once the EE is this close, so the expert can finish (1 cm tolerance)
+WHEEL_RADIUS, WHEEL_BASE_WIDTH = 0.11, 0.66     # BaseControllerParams
+
+
+def run_episode(target, ep_id, base_init=None, noise=False):    # base_init = (x, y, yaw)
+    """Run ONE expert demonstration and save it to data/raw/ (or data/raw_noise/ when noise=True)."""
+    noise_rng = np.random.default_rng(100000 + ep_id)          # reproducible noise per episode
+    tau_push, vw_push, next_push_t = np.zeros(7), np.zeros(2), 0.0
     # --------------------------------------------------------------------------
     # Configuration and Simulation Setup
     # --------------------------------------------------------------------------
@@ -180,7 +195,8 @@ def run_episode(target, ep_id, base_init=None): # base_init = (x, y, yaw)
         "ee_pos": [], 
         "wheel_cmds": [], "torque_arm": [],
         "base_vel": [], "phase": [], "q_des_arm": [],
-        "tau_g": []
+        "tau_g": [],
+        "wheel_exp": [], "torque_exp": []    # the expert's CLEAN commands (= applied ones when noise=False)
     }
     stop_message = "quit"
     nav_done_time = -1.0
@@ -191,7 +207,7 @@ def run_episode(target, ep_id, base_init=None): # base_init = (x, y, yaw)
         base_bearing = quaternion2bearing(base_ori[3], base_ori[0], base_ori[1], base_ori[2])
         q_mes = np.array(sim.GetMotorAngles(0))
         qd_mes = np.array(sim.GetMotorVelocities(0))
-
+        lin_vel, ang_vel = client.getBaseVelocity(rid)
         # Full kinematic state vector in Pinocchio format
         q_all = np.concatenate((base_pos, base_ori, q_mes))
         q_pin = dyn_model.ReoderJoints2PinVec(q_all, "pos")
@@ -213,6 +229,7 @@ def run_episode(target, ep_id, base_init=None): # base_init = (x, y, yaw)
         if base_navigation_done and nav_done_time < 0:
             nav_done_time = current_time          # when the base finished (≥ 25 s means it timed out)
 
+
         # ----------------------------------------------------------------------
         # 2. Arm Control (reaching via differential IK + gravity-compensated joint PD)
         # ----------------------------------------------------------------------
@@ -227,6 +244,22 @@ def run_episode(target, ep_id, base_init=None): # base_init = (x, y, yaw)
         # 3. Gripper / Finger Control (Fingers locked at fixed configuration)
         # ----------------------------------------------------------------------
         torque_fingers = np.zeros(6)
+
+        # Clean expert commands = training labels
+        wheel_exp, tau_exp = wheel_cmds.copy(), torque_arm.copy()
+
+        # Noise injection: perturb the APPLIED commands only
+        if noise:
+            if current_time >= next_push_t:                       # draw a new push every NOISE_HOLD s
+                tau_push = noise_rng.normal(0.0, NOISE_TORQUE_STD, 7)
+                vw_push = noise_rng.normal(0.0, [NOISE_V_STD, NOISE_W_STD])
+                next_push_t = current_time + NOISE_HOLD
+            if ee_dist_error > NOISE_ARM_OFF_DIST:               # no pushes in the final approach
+                torque_arm = np.clip(torque_arm + tau_push, -30.0, 30.0)
+            if not base_navigation_done:                          # base pushes only while navigating
+                dlw = (vw_push[0] - vw_push[1] * WHEEL_BASE_WIDTH / 2) / WHEEL_RADIUS
+                drw = (vw_push[0] + vw_push[1] * WHEEL_BASE_WIDTH / 2) / WHEEL_RADIUS
+                wheel_cmds = wheel_cmds + np.array([drw, dlw, dlw, drw])
 
         # ----------------------------------------------------------------------
         # Send Multi-Interface Control Commands
@@ -265,7 +298,8 @@ def run_episode(target, ep_id, base_init=None): # base_init = (x, y, yaw)
         log["ee_pos"].append(ee_pos)
         log["wheel_cmds"].append(wheel_cmds)
         log["torque_arm"].append(torque_arm)
-        lin_vel, ang_vel = client.getBaseVelocity(rid)
+        log["wheel_exp"].append(wheel_exp)
+        log["torque_exp"].append(tau_exp)
         log["base_vel"].append([lin_vel[0], lin_vel[1], ang_vel[2]])      # vx, vy, yaw rate (world frame)
         phase_id = 3 if base_state.done else {"align": 0, "drive": 1, "orient": 2}[base_state.phase]
         log["phase"].append(phase_id)                                       # expert's hidden phase
@@ -278,14 +312,10 @@ def run_episode(target, ep_id, base_init=None): # base_init = (x, y, yaw)
         current_time += time_step
         if int(current_time / time_step) % 500 == 0:
             print(f"t={current_time:.2f}s | Base pos: {np.round(base_pos[:2], 3)} | EE error: {ee_dist_error:.4f}m | yaw {base_bearing:.2f} | phase {base_state.phase} | nav_done {base_navigation_done}")
-    out_dir = os.path.join(cur_dir, "data", "raw")
+    out_dir = os.path.join(cur_dir, "data", "raw_noise" if noise else "raw")
     os.makedirs(out_dir, exist_ok=True)
-    # Atomic save: write to a temp file first, then rename, so a crash (e.g. disk full)
-    # never leaves a half-written ep_xxxxx.npz behind.
-    final_path = os.path.join(out_dir, f"ep_{ep_id:05d}.npz")
-    tmp_path = final_path + ".tmp.npz"
     np.savez_compressed(
-        tmp_path,
+        os.path.join(out_dir, f"ep_{ep_id:05d}.npz"),
         **{k: np.array(v, dtype=np.float32) for k, v in log.items()},
         target=target,
         base_init=np.array(base_init if base_init is not None else [0.0, 0.0, 0.0]),
@@ -293,8 +323,8 @@ def run_episode(target, ep_id, base_init=None): # base_init = (x, y, yaw)
         final_error=np.linalg.norm(target - ee_pos),
         stop_message=str(stop_message),
         nav_time=float(nav_done_time),
+        noise=bool(noise),
     )
-    os.replace(tmp_path, final_path)
 
     # Final summary report
     print("==================================================================")
@@ -318,6 +348,7 @@ if __name__ == '__main__':
     parser.add_argument("--n", type=int, default=3)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--start_id", type=int, default=0)
+    parser.add_argument("--noise", action="store_true", help="noise-injected demos -> data/raw_noise/")
     args = parser.parse_args()
 
     rng = np.random.default_rng(args.seed)
@@ -339,16 +370,15 @@ if __name__ == '__main__':
 
         # Resume support: skip episodes that were already collected. The random target/start are
         # drawn BEFORE this check, so the random sequence (and every episode's config) is unchanged.
-        path = os.path.join(TASK_DIR, "data", "raw", f"ep_{ep_id:05d}.npz")
+        path = os.path.join(TASK_DIR, "data", "raw_noise" if args.noise else "raw", f"ep_{ep_id:05d}.npz")
         if os.path.exists(path):
             ep_id += 1
             continue
 
         print(f"=== Episode {ep_id}: target {np.round(target, 3)}, start {np.round(base_init, 3)} ===")
         try:
-            run_episode(target, ep_id, base_init)
+            run_episode(target, ep_id, base_init, noise=args.noise)
         except Exception as e:
             # One failed episode must not kill the whole batch
             print(f"!!! Episode {ep_id} failed: {e}")
         ep_id += 1
-

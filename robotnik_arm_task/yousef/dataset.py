@@ -5,13 +5,19 @@ from features import base_features, arm_features, wheels_to_vw
 
 TASK_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW_DIR = os.path.join(TASK_DIR, "data", "raw")
+NOISE_DIR = os.path.join(TASK_DIR, "data", "raw_noise")     # noise-injected demonstrations (collect_data.py --noise)
 
-def split_episodes(val_frac = 0.15, seed = 0):
+def split_episodes(val_frac = 0.15, seed = 0, use_noise = False):
     """
     Returns three list of file paths: train, val, test.
-    Only successful episodes. ID >= 9000 = test set.
+    Only successful episodes. ID >= 9000 = test set (always taken from the clean data/raw/).
+    use_noise=True also adds the noise-injected episodes (data/raw_noise/) to the train/val pool.
     """
     files = sorted (glob.glob(os.path.join(RAW_DIR, "ep_*.npz")))
+    if use_noise:
+        noise_files = sorted(glob.glob(os.path.join(NOISE_DIR, "ep_*.npz")))
+        assert len(noise_files) > 0, f"No noise episodes found in {NOISE_DIR}"
+        files += noise_files
     pool, test = [], []
 
     for f in files:
@@ -19,7 +25,8 @@ def split_episodes(val_frac = 0.15, seed = 0):
         if not bool(np.load(f)["success"]):
             continue
         if ep_id >= 9000:
-            test.append(f)
+            if os.path.dirname(f) == RAW_DIR:      # test set = clean episodes only
+                test.append(f)
         else:
             pool.append(f)
 
@@ -38,8 +45,10 @@ def build_split(file_list, step = 10):
         d = np.load(f)
         xb, _ = base_features(d)
         xa, _ = arm_features(d)
-        yb = wheels_to_vw(d["wheel_cmds"])
-        ya = d["torque_arm"]
+        # Labels = the expert's CLEAN commands. In noise-injected episodes the applied commands contain
+        # the random pushes, so the clean ones are stored separately (wheel_exp / torque_exp).
+        yb = wheels_to_vw(d["wheel_exp"] if "wheel_exp" in d.files else d["wheel_cmds"])
+        ya = d["torque_exp"] if "torque_exp" in d.files else d["torque_arm"]
 
         s = slice(None, None, step)
         out["Xb"].append(xb[s])
@@ -60,9 +69,11 @@ def norm_stats(X):
     std = X.std(axis=0) + 1e-6
     return mu.astype(np.float32), std.astype(np.float32)
 
-def build_dataset(step = 10, out_path = None):
-    out_path = out_path or os.path.join(TASK_DIR, "data", f"processed_step{step}.npz")
-    train_f, val_f, test_f = split_episodes()
+def build_dataset(step = 10, use_noise = False, out_path = None):
+    tag = "_noise" if use_noise else ""
+    out_path = out_path or os.path.join(TASK_DIR, "data", f"processed_step{step}{tag}.npz")
+    train_f, val_f, test_f = split_episodes(use_noise=use_noise)
+    print(f"episodes: train {len(train_f)}, val {len(val_f)}, test {len(test_f)}")
     splits = {"train": build_split(train_f, step),
              "val": build_split(val_f, step), 
              "test": build_split(test_f, step)}
