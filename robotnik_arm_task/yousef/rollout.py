@@ -261,10 +261,11 @@ def run_policy_episode(target, ep_id, base_init, policy, net_parts=("base", "arm
         wheel_exp, tau_exp = wheel_cmds.copy(), torque_arm.copy()
 
         # The networks drive; the expert above still runs every step so its commands can be logged
+        tau_g_now = pin.computeGeneralizedGravity(dyn_model.pin_model, dyn_model.pin_data, q_pin)[6:13]   # 7 arm joints
         obs = {"base_pos": base_pos, "base_bearing": base_bearing,
                "base_vel": np.array([lin_vel[0], lin_vel[1], ang_vel[2]]),
                "q_arm": q_mes[4:11], "qd_arm": qd_mes[4:11],
-               "ee_pos": ee_pos, "target": target}
+               "ee_pos": ee_pos, "target": target, "tau_g": tau_g_now}
         w_net, tau_net = policy(obs)
         if "base" in net_parts:
             wheel_cmds = w_net
@@ -313,7 +314,7 @@ def run_policy_episode(target, ep_id, base_init, policy, net_parts=("base", "arm
         phase_id = 3 if base_state.done else {"align": 0, "drive": 1, "orient": 2}[base_state.phase]
         log["phase"].append(phase_id)                                       # expert's hidden phase
         log["q_des_arm"].append(q_des_arm)                                  # expert's hidden reference
-        log["tau_g"].append(pin.computeGeneralizedGravity(dyn_model.pin_model, dyn_model.pin_data, q_pin)[6:13])
+        log["tau_g"].append(tau_g_now)
         
         if not headless:
             time.sleep(0.001)

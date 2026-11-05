@@ -40,7 +40,7 @@ def build_split(file_list, step = 10):
     """
     Returns a dict of stacked arrays for one split (train/val/test).
     step = 10 keeps every 10th row: 1Khz -> 100 Hz."""
-    out = {"Xb": [], "Yb": [], "Xa": [], "Ya": [], "phase":[], "ep_id": []}
+    out = {"Xb": [], "Yb": [], "Xa": [], "Ya": [], "Ga": [], "phase":[], "ep_id": []}
     for f in file_list:
         d = np.load(f)
         xb, _ = base_features(d)
@@ -55,6 +55,7 @@ def build_split(file_list, step = 10):
         out["Yb"].append(yb[s])
         out["Xa"].append(xa[s])
         out["Ya"].append(ya[s])
+        out["Ga"].append(d["tau_g"][s])            # gravity torque of the 7 arm joints (for the gravity-residual labels)
         out["phase"].append(d["phase"][s])
         ep = int(os.path.basename(f)[3:8])
         out["ep_id"].append(np.full(len(xb[s]), ep))

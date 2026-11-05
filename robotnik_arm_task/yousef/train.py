@@ -13,9 +13,11 @@ def make_loaders(D, net="b", batch_size=1024):
     val_dl   = DataLoader(norm("val"),   batch_size=batch_size * 4, shuffle=False)
     return train_dl, val_dl
 
-def train_model (model, train_dl, val_dl, epochs=30, lr=1e-3, patience=5, device="cuda"):
+def train_model (model, train_dl, val_dl, epochs=30, lr=1e-3, patience=5, device="cuda", use_sched=False):
     model.to(device)
     opt = torch.optim.Adam(model.parameters(), lr=lr)
+    # Adding a scheduler 
+    sched = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, factor=0.5, patience=2) if use_sched else None
     loss_fn = torch.nn.MSELoss()
     best_val, best_state, bad_epochs = float("inf"), None, 0
     hist = {"train": [], "val": []}
@@ -41,7 +43,9 @@ def train_model (model, train_dl, val_dl, epochs=30, lr=1e-3, patience=5, device
         val_loss = tot / len(val_dl.dataset)
 
         hist["train"].append(train_loss); hist["val"].append(val_loss)
-        print(f"epoch {ep+1:2d} train {train_loss:.4f} val{val_loss:.4f}")
+        if sched is not None:
+            sched.step(val_loss)
+        print(f"epoch {ep+1:2d} train {train_loss:.4f} val {val_loss:.4f} lr {opt.param_groups[0]['lr']:.1e}")
 
 
         if val_loss < best_val:

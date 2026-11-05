@@ -24,7 +24,7 @@ TASK_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ==============================================================================
 # 2) Aggregate: load DAgger runs as extra ArmNet training rows (no simulator needed)
 # ==============================================================================
-def build_dagger(step=10, max_qd=15.0, max_base_speed=1.0):
+def build_dagger(step=10, max_qd=15.0, max_base_speed=1.0, gravity_residual = False):
     """Arm features + clean expert torque labels from all data/dagger_r*/ runs.
     Each run is cut at the first sign of the simulation blowing up (huge joint or base speeds).
     max_qd = 15 rad/s: a short (~10 ms) wrist spike of ~8 rad/s at the hold -> reach switch is normal
@@ -35,7 +35,9 @@ def build_dagger(step=10, max_qd=15.0, max_base_speed=1.0):
     for f in files:
         d = np.load(f)
         xa, _ = arm_features(d)
-        ya = d["torque_exp"]                                   # label = shadow expert, not what was applied
+        ya = d["torque_exp"]
+        if gravity_residual:
+            ya = d["torque_exp"] - d["tau_g"]                                  # remove the gravity torque  # label = shadow expert, not what was applied
         bad = (np.abs(d["qd_arm"]).max(axis=1) > max_qd) | \
               (np.linalg.norm(d["base_vel"][:, :2], axis=1) > max_base_speed)
         n = int(np.argmax(bad)) if bad.any() else len(xa)      # keep rows before the first bad one
@@ -45,10 +47,10 @@ def build_dagger(step=10, max_qd=15.0, max_base_speed=1.0):
     return np.concatenate(Xa).astype(np.float32), np.concatenate(Ya).astype(np.float32)
 
 
-def add_dagger(D, step=10):
+def add_dagger(D, step=10, gravity_residual = False):
     """Returns a copy of the dataset dict D with the DAgger rows appended to the ARM training set.
     Normalisation stats and val/test are left unchanged."""
-    Xa, Ya = build_dagger(step)
+    Xa, Ya = build_dagger(step, gravity_residual = gravity_residual)
     D = dict(D)
     D["Xa_train"] = np.concatenate([D["Xa_train"], Xa])
     D["Ya_train"] = np.concatenate([D["Ya_train"], Ya])

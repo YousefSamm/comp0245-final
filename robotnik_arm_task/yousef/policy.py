@@ -11,6 +11,8 @@ class LoadedNet:
         self.net.eval()
         self.X_mu, self.X_sd = ck["X_mu"], ck["X_sd"]
         self.Y_mu, self.Y_sd = ck["Y_mu"], ck["Y_sd"]
+        # True -> the net predicts torque - g(q) and the caller adds g(q) back (older checkpoints: False)
+        self.gravity_residual = ck.get("gravity_residual", False)
 
     def __call__(self, X):
         x = (X - self.X_mu)/self.X_sd
@@ -39,5 +41,8 @@ class BCPolicy:
         Xb, _ = base_features(d)
         Xa, _ = arm_features(d)
         wheel_cmds = vw_to_wheels(self.base(Xb))[0]
-        torque_arm = np.clip(self.arm(Xa)[0], -30.0, +30.0)
+        torque_arm = self.arm(Xa)[0]
+        if self.arm.gravity_residual:
+            torque_arm = torque_arm + obs["tau_g"]        # add the known gravity torque back
+        torque_arm = np.clip(torque_arm, -30.0, +30.0)    # clip the FULL torque, like the expert
         return wheel_cmds, torque_arm
