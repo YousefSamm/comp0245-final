@@ -21,11 +21,13 @@ from features import base_goal, wrap
 parser = argparse.ArgumentParser()
 parser.add_argument("--parts", choices=PARTS.keys(), default="both")
 parser.add_argument("--ep", type=int, default=9000)
+parser.add_argument("--arm", default="arm_net")      # ArmNet checkpoint in checkpoints/, without .pt
+parser.add_argument("--base", default="base_net")    # BaseNet checkpoint
 args = parser.parse_args()
 
-pol = BCPolicy(os.path.join(TASK_DIR, "checkpoints"))
+pol = BCPolicy(os.path.join(TASK_DIR, "checkpoints"), base_file=f"{args.base}.pt", arm_file=f"{args.arm}.pt")
 e = np.load(os.path.join(TASK_DIR, "data", "raw", f"ep_{args.ep:05d}.npz"))
-out_subdir = f"eval_{args.parts}"
+out_subdir = f"eval_{args.parts}_{args.arm}"
 run_policy_episode(e["target"], args.ep, tuple(e["base_init"]), pol,
                    net_parts=PARTS[args.parts], out_subdir=out_subdir)
 

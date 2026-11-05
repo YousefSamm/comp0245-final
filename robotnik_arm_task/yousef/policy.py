@@ -13,6 +13,7 @@ class LoadedNet:
         self.Y_mu, self.Y_sd = ck["Y_mu"], ck["Y_sd"]
         # True -> the net predicts torque - g(q) and the caller adds g(q) back (older checkpoints: False)
         self.gravity_residual = ck.get("gravity_residual", False)
+        self.version = ck.get("version", os.path.basename(path))
 
     def __call__(self, X):
         x = (X - self.X_mu)/self.X_sd
@@ -22,9 +23,10 @@ class LoadedNet:
         return y * self.Y_sd + self.Y_mu
 
 class BCPolicy:
-    def __init__(self, ckpt_dir):
-        self.base = LoadedNet(os.path.join(ckpt_dir, "base_net.pt"))
-        self.arm = LoadedNet(os.path.join(ckpt_dir, "arm_net.pt"))
+    def __init__(self, ckpt_dir, base_file="base_net.pt", arm_file="arm_net.pt"):
+        self.base = LoadedNet(os.path.join(ckpt_dir, base_file))
+        self.arm = LoadedNet(os.path.join(ckpt_dir, arm_file))
+        print(f"BCPolicy: base={base_file}  arm={arm_file} (version {self.arm.version}, gravity_residual={self.arm.gravity_residual})")
 
     def __call__(self, obs):
         """obs: dict with the live measurements of ONE time step.

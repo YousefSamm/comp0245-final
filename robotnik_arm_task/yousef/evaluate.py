@@ -25,6 +25,8 @@ parser.add_argument("--parts", choices=PARTS_CHOICES, default="both")
 parser.add_argument("--tag", required=True)                # name of the model version
 parser.add_argument("--shard", type=int, default=0)
 parser.add_argument("--nshards", type=int, default=1)
+parser.add_argument("--arm", default="arm_net")                # ArmNet checkpoint in checkpoints/, without .pt
+parser.add_argument("--base", default="base_net")              # BaseNet checkpoint
 parser.add_argument("--summary_only", action="store_true")  # just summarise already-saved runs
 args = parser.parse_args()
 
@@ -36,7 +38,7 @@ if not args.summary_only:
     torch.set_num_threads(1)
     from rollout import run_policy_episode, PARTS          # simulator only needed when running
     from policy import BCPolicy
-    pol = BCPolicy(os.path.join(TASK_DIR, "checkpoints"))
+    pol = BCPolicy(os.path.join(TASK_DIR, "checkpoints"), base_file=f"{args.base}.pt", arm_file=f"{args.arm}.pt")
     for f in test_f[args.shard::args.nshards]:
         ep = int(os.path.basename(f)[3:8])
         if os.path.exists(os.path.join(TASK_DIR, "data", out_subdir, f"ep_{ep:05d}.npz")):
