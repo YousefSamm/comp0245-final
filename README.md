@@ -59,5 +59,4 @@ All rounds, ablations and the McNemar tests are in `yousef/README.md` and the re
 
 ## Branches
 
-- `main`: the reaching pipeline
-- `obstacles`: `main` plus the obstacle extension, the final results and the report figures
+Everything is on `main`. The obstacle extension is the `yousef/obstacles/` folder.
