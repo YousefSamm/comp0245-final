@@ -140,6 +140,31 @@ multi-box ones (31 collisions).
   from a less precise parking pose, not by the boxes. The expert's sticky side and stop-and-turn state are
   still not observed; a recurrent policy is the next step.
 
+## Note: the expert always approaches the target from the origin side
+
+The template places the base goal on the line from the **world origin** to the target, at the stand-off
+distance before it and facing it (`robotnik_arm_task.py` lines 135–141, `features.base_goal`, Eq. (1) in the
+report). Where the robot starts plays no part. When the start is on the far side of the target, the
+expert has to drive past the target and round to the origin side before it can park, although a parking spot at the
+same stand-off on its own side would be much closer.
+
+In the 95 obstacle test scenes:
+
+| | start on the far side (angle > 90° at the target) | start on the near side |
+|---|---|---|
+| scenes | 40 (42 %) | 55 |
+| extra driving vs the nearest possible parking spot (median) | 1.13 m | 0.13 m |
+| expert collided | 7.5 % | 5.5 % |
+| no LiDAR / 2 features / corridor collided | 32.5 / 20.0 / 5.0 % | 27.3 / 18.2 / 3.6 % |
+| median episode, expert / corridor | 17.9 / 20.9 s | 16.8 / 18.8 s |
+
+In 41 of the 95 scenes the expert drives closer to the target than its own parking distance, i.e. it passes it.
+The fixed approach direction costs about 1 m of driving and 1–2 s in those scenes. Collisions are only
+slightly more frequent there, and the difference is not significant for any model (Fisher exact test,
+p = 0.65–1.0; `analyze_approach_obs.py`). The boxes are sampled along the start → parking-spot line, so the longer route does not meet
+more of them. Choosing the parking spot on the robot's own side of the target (`target − standoff · unit(target −
+start)`) would remove the detour, but it changes the expert, so all data would have to be collected again.
+
 ## Files
 
 | File | What it does |
@@ -153,4 +178,6 @@ multi-box ones (31 collisions).
 | `run_sect8.sh`, `run_dagger_obs.sh`, `run_fixes.sh` | one-command experiments (see Reproducing) |
 | `rollout_obs.py`, `policy_obs.py` | closed-loop run with obstacles; loads a 10- or 12-input BaseNet |
 | `run_demo_obs.py` | one test scene in the GUI with any BaseNet, or with the expert driving |
+| `analyze_approach_obs.py` | far-side vs near-side starts (the fixed approach direction): extra distance, collisions, time, Fisher test |
+| `analyze_expert_obs.py` | expert statistics from the saved demonstrations (success, collisions, detour, time avoiding, closest box) → `results/obs_expert.csv` |
 | `evaluate_obs.py` | the obstacle test set → `results/obs_<tag>.csv` (adds `n_boxes`, `collision_steps`, `collided`) |
