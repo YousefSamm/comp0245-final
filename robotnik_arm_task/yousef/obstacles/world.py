@@ -152,3 +152,47 @@ def lidar_scan_360(client, base_pos, base_bearing, obstacle_ids):
             if hit[0] in ids:
                 ranges[i] = LIDAR360_R0[i] + hit[2] * (LIDAR_RMAX - LIDAR360_R0[i])
     return ranges
+
+
+N_SECTORS = 8
+
+
+def lidar_sector_features(ranges360):
+    """Alternative BaseNet LiDAR inputs from the full 360 deg scan, shape (72,) or (T, 72) -> (T, 8):
+    proximity of the closest box in 8 sectors of 45 deg around the robot (9 rays each). Sector 0 is centred
+    straight ahead, then counter-clockwise: 45 deg left, 90 deg left, ..., behind, ..., 45 deg right.
+    Same proximity as lidar_features: 0 = clearance >= FEAT_RANGE, 1 = touching the chassis."""
+    clear = np.atleast_2d(ranges360) - LIDAR360_R0
+    clear = np.roll(clear, -32, axis=1)                   # ray 32 (-20 deg) first, so sector 0 = -20 ... +20 deg
+    clear = clear.reshape(len(clear), N_SECTORS, -1).min(axis=2)
+    return np.clip((FEAT_RANGE - clear) / FEAT_RANGE, 0.0, 1.0).astype(np.float32)
+
+
+# Corridor features: what the expert actually steers from (expert_avoid.corridor), from the front scan.
+CORR_HALF_W = 0.305 + 0.20     # m, = expert_avoid.HALF_W (driving corridor: chassis half-width + 20 cm)
+CORR_BUMPER = 0.36             # m, = expert_avoid.FRONT (centre -> front bumper)
+
+
+def lidar_corridor_features(ranges):
+    """Alternative BaseNet LiDAR inputs from the front scan, shape (37,) or (T, 37) -> (T, 6):
+      0  corridor proximity: how close the nearest hit INSIDE the driving corridor is to the bumper
+         (same 0..1 scale as the other proximities; 0 = nothing in the corridor within FEAT_RANGE)
+      1  corridor side: +1 if that hit is left of centre, -1 if right, 0 if the corridor is clear
+      2  left proximity, 3 right proximity: closest clearance from the chassis among rays left / right of ahead
+      4  angle, 5 proximity of the closest hit overall (= lidar_features)
+    These are the quantities expert_avoid.corridor() computes; the expert's sticky side and stop-and-turn
+    state are still not visible."""
+    r = np.atleast_2d(ranges)
+    hit = r < LIDAR_RMAX - 0.01
+    px, py = r * np.cos(LIDAR_ANGLES), r * np.sin(LIDAR_ANGLES)
+    inside = hit & (px > 0) & (np.abs(py) < CORR_HALF_W)
+    k = np.argmin(np.where(inside, px, np.inf), axis=1)
+    rows = np.arange(len(r))
+    any_in = inside.any(axis=1)
+    free = np.where(any_in, px[rows, k] - CORR_BUMPER, np.inf)
+    corr_prox = np.clip((FEAT_RANGE - free) / FEAT_RANGE, 0.0, 1.0)
+    corr_side = np.where(any_in, np.where(py[rows, k] >= 0, 1.0, -1.0), 0.0)
+    clear = r - LIDAR_R0
+    left = np.clip((FEAT_RANGE - clear[:, LIDAR_ANGLES > 0].min(axis=1)) / FEAT_RANGE, 0.0, 1.0)
+    right = np.clip((FEAT_RANGE - clear[:, LIDAR_ANGLES < 0].min(axis=1)) / FEAT_RANGE, 0.0, 1.0)
+    return np.column_stack([corr_prox, corr_side, left, right, lidar_features(r)]).astype(np.float32)

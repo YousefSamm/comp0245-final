@@ -289,7 +289,7 @@ def run_policy_episode(target, ep_id, base_init, policy, net_parts=("base", "arm
         obs = {"base_pos": base_pos, "base_bearing": base_bearing,
                "base_vel": np.array([lin_vel[0], lin_vel[1], ang_vel[2]]),
                "q_arm": q_mes[4:11], "qd_arm": qd_mes[4:11],
-               "ee_pos": ee_pos, "target": target, "tau_g": tau_g_now, "lidar": ranges}
+               "ee_pos": ee_pos, "target": target, "tau_g": tau_g_now, "lidar": ranges, "lidar360": ranges360}
         w_net, tau_net = policy(obs)
         if "base" in net_parts:
             wheel_cmds = w_net

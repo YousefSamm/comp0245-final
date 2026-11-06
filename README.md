@@ -10,8 +10,9 @@ then a Kinova JACO2 arm that reaches it) with two MLPs trained by behaviour clon
 
 Clean demonstrations alone fail in closed loop. Noise injection (DART), four rounds of DAgger with a
 shadow expert, and a gravity residual (ArmNet predicts τ − g(q)) bring the hand within 2 cm of unseen
-targets in **89.9 % of 494 test episodes**. As an extension, a BaseNet with two LiDAR features avoids
-static boxes.
+targets in **89.9 % of 494 test episodes**. As an extension, a BaseNet given the driving-corridor
+quantities the expert steers from, measured with a LiDAR, avoids static boxes as well as the expert
+(4.2 % collisions against 29.5 % without LiDAR).
 
 ## Where things are
 

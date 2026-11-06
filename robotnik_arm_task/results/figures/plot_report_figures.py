@@ -5,7 +5,8 @@
 final_error_cdf_494.png : share of the 494 test episodes within each error threshold for the three final
                           ArmNet versions. Solid = closest approach to the target (what success uses),
                           dashed = error at the end of the episode.
-obstacle_results.png    : collisions and success within 2 cm in the 95 obstacle scenes for each BaseNet,
+obstacle_results.png    : collisions and success within 2 cm in the 95 obstacle scenes for each BaseNet
+                          (all trained on single- and multi-box demonstrations),
                           with the expert's collision rate as a dotted line.
 """
 import os
@@ -53,7 +54,8 @@ def final_error_cdf():
 
 
 def obstacle_results():
-    rows = [("nolidar", "No LiDAR"), ("1box", "LiDAR,\nsingle-box"), ("multi", "LiDAR,\nsingle+multi")]
+    rows = [("nolidar", "No\nLiDAR"), ("multi", "2 front\nfeatures"), ("sect8", "8 sectors\n(360\u00b0)"),
+            ("daggernear", "2 features\n+ DAgger"), ("corr", "Corridor\nfeatures")]
     collided, s2, s2_clean = [], [], []
     for tag, _ in rows:
         x = pd.read_csv(os.path.join(RES_DIR, f"obs_obs_{tag}.csv"))
@@ -61,17 +63,17 @@ def obstacle_results():
         collided.append(100 * c.mean())
         s2.append(100 * s.mean())
         s2_clean.append(100 * (s & ~c).mean())
-    fig, ax = plt.subplots(figsize=(3.4, 2.1))
-    i, w = np.arange(len(rows)), 0.26
+    fig, ax = plt.subplots(figsize=(3.4, 2.2))
+    i, w = np.arange(len(rows)), 0.27
     bars = [(collided, "Collided", "#d62728"), (s2, "Success @2 cm", "#1f77b4"),
             (s2_clean, "@2 cm, no collision", "#2ca02c")]
     for k, (vals, label, c) in enumerate(bars):
         b = ax.bar(i + (k - 1) * w, vals, w, label=label, color=c)
         for r, val in zip(b, vals):
-            ax.text(r.get_x() + r.get_width() / 2, val + 1, f"{val:.0f}", ha="center", fontsize=6)
+            ax.text(r.get_x() + r.get_width() / 2, val + 1, f"{val:.0f}", ha="center", fontsize=5)
     ax.axhline(EXPERT_COLLIDED, color="#d62728", lw=0.7, ls=":", label=f"Expert collided ({EXPERT_COLLIDED} %)")
     ax.set_xticks(i)
-    ax.set_xticklabels([r[1] for r in rows])
+    ax.set_xticklabels([r[1] for r in rows], fontsize=6.5)
     ax.set_ylabel("Episodes (%)")
     ax.set_ylim(0, 100)
     ax.legend(frameon=False, fontsize=6.3, ncol=2, loc="upper right")
