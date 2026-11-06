@@ -28,9 +28,12 @@ parser.add_argument("--nshards", type=int, default=1)
 parser.add_argument("--arm", default="arm_net")                # ArmNet checkpoint in checkpoints/, without .pt
 parser.add_argument("--base", default="base_net")              # BaseNet checkpoint
 parser.add_argument("--summary_only", action="store_true")  # just summarise already-saved runs
+parser.add_argument("--max_id", type=int, default=None)  # e.g. 9100 = only the original 98 test episodes
 args = parser.parse_args()
 
 _, _, test_f = split_episodes()                            # the 98 successful clean test episodes
+if args.max_id is not None:
+    test_f = [f for f in test_f if int(os.path.basename(f)[3:8]) < args.max_id]
 out_subdir = f"test_{args.parts}_{args.tag}"
 
 if not args.summary_only:

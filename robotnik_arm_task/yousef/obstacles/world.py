@@ -14,15 +14,15 @@ OBS_HALF = (0.10, 0.15)        # m, half the side length (sides 0.20-0.30 m), sa
 OBS_HEIGHT = 1.0               # m, taller than the LiDAR plane
 N_OBS = [0, 2, 3, 4]           # number of boxes in an episode ...
 N_OBS_P = [0.1, 0.3, 0.3, 0.3] # ... and its probability (10 % empty scenes: drive normally when nothing is near)
-PATH_FRAC = (0.20, 0.80)       # boxes sit between 20 % and 80 % of the start -> base-goal line ...
-LATERAL = 0.6                  # m ... up to this far to either side of it (some block the way, some do not)
+PATH_FRAC = (0.10, 0.90)       # boxes sit between 10 % and 90 % of the start -> base-goal line ...
+LATERAL = 1.0                  # m ... up to this far to either side of it (some block the way, some do not)
 START_DIST = (2.0, 3.2)        # m, start -> base-goal distance (collect_obs.py samples the start this far out)
 MIN_PATH = 1.6                 # m, shorter start -> base-goal lines get no boxes
 # Keep-out radii ("donut" holes), measured from the edge of the box's bounding circle (half-side * sqrt 2):
 CLEAR_TARGET = 0.6             # m around the target (x, y): the arm's reaching space stays free
 CLEAR_GOAL = 0.80              # m around the base goal: the base can park and turn in place (chassis corner ~0.47 m)
 CLEAR_START = 0.75             # m around the start pose: it turns in place there (chassis corner ~0.47 m)
-CLEAR_EACH = 1.4              # m between two boxes' bounding circles: the robot (0.61 m wide) passes with room
+CLEAR_EACH = 1.0              # m between two boxes' bounding circles: robot 0.61 m + 0.2 m safety each side
 
 # ------------------------------------------------------------------------------
 # LiDAR: a horizontal fan of rays over the front 180 deg
