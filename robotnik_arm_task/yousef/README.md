@@ -7,8 +7,8 @@ The idea is that the report can be written from what's here. Every number in the
 regenerated with the commands below, and the CSV files in `results/` contain the raw per-episode numbers
 for plots.
 
-If something doesn't work or doesn't make sense, ask me before changing anything, because later steps
-depend on earlier ones.
+Later steps depend on earlier ones (DAgger data depends on the checkpoints that drove it), so the
+commands are listed in the order they were run.
 
 ---
 
@@ -58,13 +58,20 @@ ROBOENV_HEADLESS=1 python yousef/collect_data.py --n 300 --seed 2   --start_id 1
 ROBOENV_HEADLESS=1 python yousef/collect_data.py --n 300 --seed 3   --start_id 2000 > log_s3.txt
 ROBOENV_HEADLESS=1 python yousef/collect_data.py --n 300 --seed 4   --start_id 3000 > log_s4.txt
 ROBOENV_HEADLESS=1 python yousef/collect_data.py --n 100 --seed 900 --start_id 9000 > log_test.txt
+# 400 more test episodes, added later for the final comparison
+ROBOENV_HEADLESS=1 python yousef/collect_data.py --n 100 --seed 901 --start_id 9100 > log_tst_0.txt
+ROBOENV_HEADLESS=1 python yousef/collect_data.py --n 100 --seed 902 --start_id 9200 > log_tst_1.txt
+ROBOENV_HEADLESS=1 python yousef/collect_data.py --n 100 --seed 903 --start_id 9300 > log_tst_2.txt
+ROBOENV_HEADLESS=1 python yousef/collect_data.py --n 100 --seed 904 --start_id 9400 > log_tst_3.txt
 ```
 
 - IDs 0–3299: training pool (split 85/15 into train/val by episode, seed 0).
-- **IDs 9000–9099: test set. Never train or tune on these.**
+- **IDs 9000–9499: test set. Never train or tune on these.** The first 98 solved ones (9000–9099)
+  were used while developing; all 494 solved ones for the final comparison.
 - Targets: 0.8–2.0 m from the world origin in any direction, height 0.1–1.25 m.
   Start pose: x, y in [−1, 1] m, any heading. Targets closer than 0.6 m to the start are re-drawn.
-- Result: 1300 episodes, 1283 successful (98.7 %). The 17 failures are excluded from training.
+- Result: 1200 training configurations (1185 solved) and 500 test configurations (494 solved), so the
+  expert solves 98.8 %. Failures are excluded from training and testing.
 
 Quick check: `ep_00000.npz` should have target `[-1.35, 0.43, 0.27]` and start `[0.9, -0.38, -0.48]`.
 
@@ -83,7 +90,7 @@ the last 5 cm before the target and no base pushes once the base has parked. Wha
 is the expert's **clean** command (`torque_exp`, `wheel_exp`), so the data shows the expert correcting
 itself. Section 5 explains why this was needed.
 
-### 3.3 DAgger runs → `data/dagger_r1/`, `data/dagger_r2/` (≈ 10 min per round)
+### 3.3 DAgger runs → `data/dagger_r1/` … `data/dagger_r4/` (≈ 10 min per round)
 
 ```bash
 ROBOENV_HEADLESS=1 ROBOENV_MAX_STEPS=20000 python yousef/dagger.py --round 1 --shard 0 --nshards 4 > log_d0.txt
@@ -98,7 +105,11 @@ regenerated from seeds alone. To get my DAgger data you need my checkpoints. I'l
 | Round | Networks that drove | Then retrained |
 |---|---|---|
 | 1 | BaseNet + ArmNet trained on clean + noise data (`arm_net_noise.pt`) | ArmNet → `arm_net_dagger1.pt` |
-| 2 | BaseNet + `arm_net_dagger1.pt` | ArmNet → `dagger2_full` (the current `arm_net.pt`) |
+| 2 | BaseNet + `arm_net_dagger1.pt` | ArmNet → `arm_net_dagger2_cut.pt`, then `arm_net_dagger2_full.pt` (see 5.5) |
+| 3 | BaseNet + `arm_net_dagger2_full.pt` | ArmNet → `arm_net_dagger3.pt` (also `_sched`, `_gravres` variants) |
+| 4 | BaseNet + `arm_net_dagger3_gravres.pt` | ArmNet → `arm_net_dagger4_gravres.pt` (**final**) and `arm_net_dagger4.pt` (ablation) |
+
+Change `--round N` for each round. BaseNet (`base_net.pt`, clean + noise data) is the same in every row.
 
 Each round uses 160 configurations from the **training split only**, so val and test stay untouched.
 
@@ -114,11 +125,13 @@ Each round uses 160 configurations from the **training split only**, so val and 
    - `DATASET` = `"clean"` or `"noise"`
    - `USE_DAGGER`: adds all `data/dagger_r*/` runs to ArmNet's training data (not BaseNet's, see 5.4)
    - `TRAIN_BASE` / `TRAIN_ARM`: which network to retrain
+   - `GRAV_RES`: ArmNet learns τ − g(q) instead of τ; `policy.py` adds g(q) back at run time (5.6)
    - `VERSION`: name for the checkpoints. They're saved as `<net>_<VERSION>.pt` and also as the
      "active" `<net>.pt` that everything else loads.
 
 Both networks are 3 hidden layers of 256 units with ReLU, trained with Adam (lr 1e-3, batch 1024) on
-MSE of normalised outputs, with early stopping on the validation loss (patience 5, best epoch kept).
+MSE of normalised outputs, at most 30 epochs with early stopping on the validation loss (patience 5,
+best epoch kept), seed 0. After each DAgger round ArmNet is retrained from scratch on all data so far.
 
 ---
 
@@ -168,8 +181,8 @@ situation never changed.
 **Fix: DAgger (3.3).** Let the networks drive, and at every step record what the expert would have done
 in that exact state. In the stuck state the expert's answer is "push towards the target", which was
 exactly what the network had never seen. The new pairs are added to the training data and ArmNet is
-retrained. After round 1 the arm started reaching (about 1.2 cm from the target on episode 9030). Round 2
-added labels for states close to the target and improved the precision.
+retrained. After round 1 the arm started reaching and got within 2 cm in 84.7 % of the 98 development
+episodes. Round 2 did not improve on that (see 5.5 and section 6).
 
 DAgger labels are only used for ArmNet. While BaseNet drives, the expert's base logic doesn't follow the
 robot's actual path, so its wheel labels aren't reliable.
@@ -181,36 +194,62 @@ starts triggered it, so most of the reaching data was thrown away. Raising it to
 on the full data is the difference between `dagger2_cut` and `dagger2_full` below. That makes it a
 natural ablation showing that labels near the target are what improved precision.
 
+### 5.6 Rounds 3 and 4, and the gravity residual
+A third DAgger round raised success within 2 cm to 89.8 % on the 98 development episodes. A learning-rate
+scheduler lowered the training loss but not closed-loop success (86.7 %, p = 0.58). Since g(q) is known
+from the robot model, ArmNet was then trained to predict only τ − g(q) (`GRAV_RES = True`); a fourth
+DAgger round driven by that network gave the final model, `dagger4_gravres`.
+
+98 episodes are too few to separate models that differ by a few points (±6 points at 90 %), so the test
+set was enlarged to 494 episodes and models are compared episode by episode with McNemar's exact test.
+To isolate the residual, the same round-4 data was also trained without it (`dagger4`).
+
 ---
 
-## 6. Results so far
+## 6. Results
 
-98 test episodes (IDs 9000–9099 that the expert solved), both networks driving. "Success at X cm"
-means the hand got within X cm of the target at some point. The expert's own controller uses 1 cm, but
-that's too strict to summarise a learned policy, so we report three thresholds.
+Both networks driving. "Success at X cm" means the hand got within X cm of the target at some point.
+The expert's own controller uses 1 cm, but that's too strict to summarise a learned policy, so we report
+three thresholds. "Blew up" = the simulation became unstable.
 
-| Version (ArmNet) | @5 cm | @2 cm | @1 cm | median best error | median final error | blew up |
-|---|---|---|---|---|---|---|
-| `clean` | to do | | | | | |
-| `noise` | to do | | | | | |
-| `dagger1` | to do | | | | | |
-| `dagger2_cut` | 95.9 % | 66.3 % | 12.2 % | 1.3 cm | 2.2 cm | 0 |
-| `dagger2_full` | 94.9 % | 83.7 % | 10.2 % | 1.0 cm | 1.3 cm | 0 |
-| expert | 100 % | 100 % | 100 % | < 1 cm | < 1 cm | 0 |
+**Development, 98 test episodes (IDs 9000–9099):**
 
-Median time to get within 5 cm is about 8.6 s, against about 9.9 s for a full expert episode.
-Most episodes end just above 1 cm, which suggests a small constant offset rather than random misses.
+| Version (ArmNet) | @1 cm | @2 cm | @5 cm | blew up |
+|---|---|---|---|---|
+| `clean` | 0.0 % | 0.0 % | 2.0 % | 98 |
+| `noise` | 0.0 % | 0.0 % | 6.1 % | 0 |
+| `dagger1` | 13.3 % | 84.7 % | 96.9 % | 0 |
+| `dagger2_cut` | 12.2 % | 66.3 % | 95.9 % | 0 |
+| `dagger2_full` | 10.2 % | 83.7 % | 94.9 % | 0 |
+| `dagger3` | 11.2 % | 89.8 % | 99.0 % | 0 |
+| `dagger3_sched` | 10.2 % | 86.7 % | 95.9 % | 1 |
+| `dagger3_gravres` | 16.3 % | 80.6 % | 96.9 % | 0 |
+| `dagger4_gravres` | 15.3 % | 92.9 % | 98.0 % | 1 |
 
-To fill in the missing rows, copy a backed-up arm checkpoint over the active one and evaluate it under
-its own tag, e.g.:
+**Final comparison, 494 test episodes (IDs 9000–9499):**
+
+| Version (ArmNet) | @1 cm | @2 cm | @5 cm | blew up |
+|---|---|---|---|---|
+| `dagger3` | 14.4 % | 87.7 % | 97.6 % | 2 |
+| `dagger4` (no residual) | 14.4 % | 85.4 % | 95.1 % | 10 |
+| `dagger4_gravres` (final) | 14.6 % | 89.9 % | 96.4 % | 4 |
+
+Paired McNemar tests (2 cm unless noted): noise → dagger1 p < 0.001; dagger1 → dagger2_cut p < 0.001
+(worse); dagger2_cut → dagger2_full p = 0.001; dagger4 → dagger4_gravres p = 0.008 (same data, only the
+residual differs); dagger3 vs dagger4_gravres p = 0.17; dagger3 → dagger4 at 5 cm p = 0.004 (worse).
+BaseNet parks with a median error of 7.1 cm and 0.04 rad, and the final model reaches 2 cm in a median
+9.4 s against a 9.7 s median expert episode.
+
+To evaluate a checkpoint (4 shards in 4 terminals, then the summary):
 
 ```bash
-cp checkpoints/arm_net_noise.pt checkpoints/arm_net.pt
-ROBOENV_HEADLESS=1 ROBOENV_MAX_STEPS=25000 python yousef/evaluate.py --parts both --tag noise --shard 0 --nshards 4
+ROBOENV_HEADLESS=1 ROBOENV_MAX_STEPS=25000 python yousef/evaluate.py --parts both --tag dagger4_gravres --arm arm_net_dagger4_gravres --shard 0 --nshards 4
 #   ... shards 1–3, then:
-python yousef/evaluate.py --parts both --tag noise --summary_only
-cp checkpoints/arm_net_dagger2_full.pt checkpoints/arm_net.pt      # put the best one back afterwards
+python yousef/evaluate.py --parts both --tag dagger4_gravres --summary_only
 ```
+
+`--arm` / `--base` pick a checkpoint in `checkpoints/` (default: the active `arm_net` / `base_net`), and
+`--max_id 9100` restricts the run to the 98 development episodes.
 
 ---
 
@@ -232,7 +271,7 @@ A starting point:
 
 ```python
 import pandas as pd, matplotlib.pyplot as plt
-tags = ["dagger2_cut", "dagger2_full"]           # add clean, noise, dagger1 once they exist
+tags = ["clean", "noise", "dagger1", "dagger2_cut", "dagger2_full", "dagger3"]
 df = {t: pd.read_csv(f"results/test_both_{t}.csv") for t in tags}
 
 # success rate per version and threshold
@@ -245,6 +284,8 @@ for t, d in df.items():
     plt.hist(d["best_err"] * 100, bins=30, alpha=0.6, label=t)
 plt.xlabel("best hand-to-target error (cm)"); plt.ylabel("episodes"); plt.legend(); plt.show()
 ```
+
+The two result figures in the report are made by `results/figures/plot_report_figures.py`.
 
 Individual runs (full trajectories, both the network's and the expert's commands) are saved in
 `data/test_both_<tag>/ep_XXXXX.npz` if you want time plots of one episode.
@@ -267,6 +308,7 @@ Individual runs (full trajectories, both the network's and the expert's commands
 | `metrics.py` | the metrics in section 7 |
 | `01_features_dataset.ipynb`, `02_training.ipynb` | checks, dataset building, training |
 | `notes/` | day-by-day logs with more detail on every step and every bug |
+| `obstacles/` | the obstacle-avoidance extension, see its own README |
 
 Everything outside `yousef/` is either the template (unchanged) or Mathilda's work.
 
@@ -274,12 +316,12 @@ Everything outside `yousef/` is either the template (unchanged) or Mathilda's wo
 
 | Path | Content |
 |---|---|
-| `data/raw/` | 1300 clean expert episodes |
+| `data/raw/` | 1200 training + 500 test clean expert episodes |
 | `data/raw_noise/` | 400 noise-injected expert episodes (IDs 5000–8099) |
-| `data/dagger_r1/`, `data/dagger_r2/` | DAgger runs |
+| `data/dagger_r1/` … `data/dagger_r4/` | DAgger runs, 160 per round |
 | `data/processed_step10*.npz` | built datasets |
 | `data/test_both_<tag>/` | saved test runs per model version |
-| `checkpoints/` | `base_net.pt` and `arm_net.pt` are the active ones; `*_clean`, `*_noise`, `*_dagger1`, `*_dagger2_cut` are earlier versions |
+| `checkpoints/` | `base_net.pt` and `arm_net.pt` are the active ones (`arm_net.pt` = `dagger4_gravres`); `arm_net_<tag>.pt` for every version in section 6; `base_net_obs_*.pt` for the obstacle extension |
 
 ---
 
@@ -288,7 +330,8 @@ Everything outside `yousef/` is either the template (unchanged) or Mathilda's wo
 - Offline accuracy said almost nothing about closed-loop success. That gap is the main finding.
 - Each fix targets one observed failure, with evidence: the stiffness test for noise injection, and the
   stuck reach for DAgger.
-- Limitations: a remaining ~1 cm offset; a short wrist jerk when the reach starts; DAgger labels from an
-  expert that isn't in control are an approximation (its hidden `q_des` evolves differently); only 2
-  DAgger rounds; simulation only.
+- Limitations: a remaining ~1 cm offset (success within 1 cm stays near 15 % for every model); a short
+  wrist jerk when the reach starts; DAgger labels from an expert that isn't in control are an
+  approximation (its hidden `q_des` evolves differently); DAgger data collected by one policy did not
+  help a different one (dagger4 without the residual got worse); simulation only.
 - The test set was never used for training or tuning. DAgger only ever used training configurations.
